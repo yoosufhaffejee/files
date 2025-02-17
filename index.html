@@ -83,10 +83,12 @@
                 
                 const filesMap = {};
 
-                // Filter out only the valid files based on extension
+                // Filter out only the valid files based on extension and include part files
                 data.forEach(file => {
                     const fileExtension = file.name.split('.').pop().toLowerCase();
-                    if (validFileExtensions.includes(fileExtension)) {
+                    
+                    // Include files with valid extensions or part files (e.g., .part1, .part2)
+                    if (validFileExtensions.includes(fileExtension) || file.name.match(/\.part\d+$/)) {
                         filesMap[file.name] = { file, totalSize: file.size };
                     }
                 });
@@ -124,7 +126,7 @@
                 const fileExtension = file.name.split('.').pop().toLowerCase();
 
                 // Only add valid file types
-                if (validFileExtensions.includes(fileExtension)) {
+                if (validFileExtensions.includes(fileExtension) || file.name.match(/\.part\d+$/)) {
                     const row = document.createElement('tr');
                     row.innerHTML = `
                         <td>${file.name}</td>
@@ -145,8 +147,8 @@
             }
 
             const file = fileInput.files[0];
-            if (file.size < 50 * 1024 * 1024) {
-                splitResult.innerText = "File is under 50MB, no need to split.";
+            if (file.size < 100 * 1024 * 1024) {
+                splitResult.innerText = "File is under 100MB, no need to split.";
                 return;
             }
 
