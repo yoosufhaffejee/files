@@ -3,52 +3,175 @@
 <head>
     <meta charset="UTF-8">
     <title>GitHub File Downloader</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        ul { list-style-type: none; padding: 0; }
-        li { margin: 10px 0; }
-        a { text-decoration: none; color: #0366d6; }
+        body { background-color: #121212; color: #E0E0E0; font-family: Arial, sans-serif; }
+        .container { max-width: 900px; margin: auto; padding: 20px; background: #1E1E1E; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        h1 { color: #BB86FC; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: left; }
+        th { background: #333; color: #BB86FC; }
+        tr:nth-child(even) { background: #222; }
+        tr:hover { background: #444; }
+        a { color: #03DAC6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .split-section { margin-top: 20px; padding: 15px; background: #333; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <h1>Download Files from GitHub Repo</h1>
-    <ul id="file-list">Loading files...</ul>
+    <div class="container">
+        <h1 class="text-2xl font-bold">GitHub File Downloader</h1>
+        
+        <!-- GitHub Files Section -->
+        <table>
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>Size</th>
+                    <th>Download</th>
+                </tr>
+            </thead>
+            <tbody id="github-file-list"> 
+                <tr><td colspan="3" class="text-center">Loading files...</td></tr>
+            </tbody>
+        </table>
+        
+        <!-- Local Folder Selection -->
+        <div class="split-section">
+            <h2 class="text-lg font-bold text-blue-400">Local Folder Selection</h2>
+            <input type="file" id="localFolderInput" class="bg-gray-700 p-2 rounded" webkitdirectory multiple>
+            <table>
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Size</th>
+                    </tr>
+                </thead>
+                <tbody id="local-file-list">
+                    <!-- Files from the selected folder will be displayed here -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="split-section">
+            <h2 class="text-lg font-bold text-blue-400">Split Large Files</h2>
+            <p>Upload a file over 100MB to split into smaller chunks.</p>
+            <input type="file" id="fileInput" class="bg-gray-700 p-2 rounded">
+            <button onclick="splitFile()" class="bg-blue-500 p-2 rounded mt-2">Split File</button>
+            <div id="splitResult" class="mt-2 text-green-400"></div>
+        </div>
+    </div>
 
     <script>
         const username = 'yoosufhaffejee';
         const repo = 'files';
+        const CHUNK_SIZE = 50 * 1024 * 1024; // 50MB per chunk
+
+        // Valid file extensions to include (text, document, audio, video, and archive types)
+        const validFileExtensions = [
+            'pdf', 'txt', 'doc', 'docx', 'rtf', 'odt', 'csv', 'md', 'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg',
+            'mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'zip', 'tar', 'rar', 
+            '7z', 'iso', 'tar.gz', 'tar.bz2', 'tar.xz', 'xlsx', 'xls', 'pptx', 'ppt'
+        ];
 
         async function fetchFiles() {
-            const fileList = document.getElementById('file-list');
+            const fileList = document.getElementById('github-file-list');
 
             try {
                 const response = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/`);
                 const data = await response.json();
+                
+                const filesMap = {};
 
-                fileList.innerHTML = '';
-
+                // Filter out only the valid files based on extension
                 data.forEach(file => {
-                    if (file.type === 'file') {
-                        const li = document.createElement('li');
-                        const link = document.createElement('a');
-                        link.href = file.download_url;
-                        link.textContent = `Download ${file.name}`;
-                        link.setAttribute('download', file.name);
-                        li.appendChild(link);
-                        fileList.appendChild(li);
+                    const fileExtension = file.name.split('.').pop().toLowerCase();
+                    if (validFileExtensions.includes(fileExtension)) {
+                        filesMap[file.name] = { file, totalSize: file.size };
                     }
                 });
 
-                if (!fileList.hasChildNodes()) {
-                    fileList.innerHTML = '<li>No files found.</li>';
-                }
+                fileList.innerHTML = '';
 
+                if (Object.keys(filesMap).length === 0) {
+                    fileList.innerHTML = '<tr><td colspan="3" class="text-center">No valid files available in the repository.</td></tr>';
+                } else {
+                    Object.entries(filesMap).forEach(([fileName, fileData]) => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${fileName}</td>
+                            <td>${(fileData.totalSize / 1024 / 1024).toFixed(3)} MB</td>
+                            <td class="text-center">
+                                <a href="${fileData.file.download_url}" class="text-blue-400 hover:underline" download>Download</a>
+                            </td>
+                        `;
+                        fileList.appendChild(row);
+                    });
+                }
             } catch (error) {
                 console.error('Error fetching files:', error);
-                fileList.innerHTML = '<li>Failed to load files.</li>';
+                fileList.innerHTML = '<tr><td colspan="3" class="text-center">Failed to load files from GitHub.</td></tr>';
             }
         }
 
+        // Listen for changes to the folder input
+        document.getElementById('localFolderInput').addEventListener('change', function(event) {
+            const localFileList = document.getElementById('local-file-list');
+            localFileList.innerHTML = ''; // Clear previous file list
+
+            const files = event.target.files;
+            for (let file of files) {
+                const fileExtension = file.name.split('.').pop().toLowerCase();
+
+                // Only add valid file types
+                if (validFileExtensions.includes(fileExtension)) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${file.name}</td>
+                        <td>${(file.size / 1024 / 1024).toFixed(3)} MB</td>
+                    `;
+                    localFileList.appendChild(row);
+                }
+            }
+        });
+
+        function splitFile() {
+            const fileInput = document.getElementById("fileInput");
+            const splitResult = document.getElementById("splitResult");
+            
+            if (!fileInput.files.length) {
+                splitResult.innerText = "Please select a file.";
+                return;
+            }
+
+            const file = fileInput.files[0];
+            if (file.size < 50 * 1024 * 1024) {
+                splitResult.innerText = "File is under 50MB, no need to split.";
+                return;
+            }
+
+            let start = 0;
+            let index = 1;
+            while (start < file.size) {
+                const chunk = file.slice(start, start + CHUNK_SIZE);
+                const chunkName = `${file.name}.part${index}`;
+                
+                const blob = new Blob([chunk]);
+                const downloadLink = document.createElement("a");
+                downloadLink.href = URL.createObjectURL(blob);
+                downloadLink.download = chunkName;
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                
+                start += CHUNK_SIZE;
+                index++;
+            }
+            
+            splitResult.innerText = `File split into ${index - 1} parts. Download each part.`;
+        }
+
+        // Fetch files from GitHub when the page loads
         fetchFiles();
     </script>
 </body>
