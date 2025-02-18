@@ -185,37 +185,51 @@
                 const response = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/`);
                 const data = await response.json();
 
-                // Filter parts that belong to the given file
+                // Check for multipart files
                 let parts = data.filter(file => file.name.startsWith(fileName) && file.name.match(/\.part\d+$/));
 
-                if (parts.length === 0) {
-                    alert(`No parts found for ${fileName}`);
-                    return;
+                if (parts.length > 0) {
+                    // Sort parts in numerical order (fileName.part1, fileName.part2, ...)
+                    parts.sort((a, b) => {
+                        const partA = a.name.match(/\.part(\d+)$/);
+                        const partB = b.name.match(/\.part(\d+)$/);
+                        return (partA && partB) ? parseInt(partA[1]) - parseInt(partB[1]) : 0;
+                    });
+
+                    // Fetch all file parts as blobs
+                    const fileChunks = await Promise.all(parts.map(part => fetch(part.download_url).then(res => res.blob())));
+
+                    // Merge blobs into a single file
+                    const combinedBlob = new Blob(fileChunks, { type: 'application/octet-stream' });
+
+                    // Trigger download
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = URL.createObjectURL(combinedBlob);
+                    downloadLink.download = fileName; // Save as the base file name
+                    downloadLink.click();
+                } else {
+                    // If no parts exist, check for a single file with the same name
+                    const singleFile = data.find(file => file.name === fileName);
+
+                    if (singleFile) {
+                        // Fetch and download the single file
+                        const fileResponse = await fetch(singleFile.download_url);
+                        const fileBlob = await fileResponse.blob();
+
+                        const downloadLink = document.createElement('a');
+                        downloadLink.href = URL.createObjectURL(fileBlob);
+                        downloadLink.download = fileName;
+                        downloadLink.click();
+                    } else {
+                        alert(`No file found with the name: ${fileName}`);
+                    }
                 }
-
-                // Sort parts in order (e.g., fileName.part1, fileName.part2, ...)
-                parts.sort((a, b) => {
-                    const partA = a.name.match(/\.part(\d+)$/);
-                    const partB = b.name.match(/\.part(\d+)$/);
-                    return (partA && partB) ? parseInt(partA[1]) - parseInt(partB[1]) : 0;
-                });
-
-                // Fetch all file parts as blobs
-                const fileChunks = await Promise.all(parts.map(part => fetch(part.download_url).then(res => res.blob())));
-
-                // Merge blobs into a single file
-                const combinedBlob = new Blob(fileChunks, { type: 'application/octet-stream' });
-
-                // Create a download link and trigger download
-                const downloadLink = document.createElement('a');
-                downloadLink.href = URL.createObjectURL(combinedBlob);
-                downloadLink.download = fileName; // Save as the base file name
-                downloadLink.click();
-
             } catch (error) {
-                console.error('Error merging GitHub parts:', error);
+                console.error('Error downloading file:', error);
+                alert('Failed to download the file.');
             }
         }
+
 
         async function downloadChunks(fileName) {
             try {
