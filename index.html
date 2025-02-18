@@ -78,6 +78,7 @@
                 <tr>
                     <th>File Name</th>
                     <th>Size</th>
+                    <th>Chunks</th>
                     <th>Download</th>
                 </tr>
             </thead>
@@ -153,15 +154,20 @@
                 fileList.innerHTML = '';
 
                 if (Object.keys(filesMap).length === 0) {
-                    fileList.innerHTML = '<tr><td colspan="3" class="text-center">No valid files available in the repository.</td></tr>';
+                    fileList.innerHTML = '<tr><td colspan="4" class="text-center">No valid files available in the repository.</td></tr>';
                 } else {
                     Object.entries(filesMap).forEach(([baseFileName, parts]) => {
+                        const numChunks = parts.length;
+                        const escapedFileName = baseFileName.replace(/'/g, "\\'"); // Escape single quotes
+
                         const row = document.createElement('tr');
                         row.innerHTML = `
                             <td>${baseFileName}</td>
                             <td>${(parts.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024).toFixed(3)} MB</td>
+                            <td>${numChunks}</td>
                             <td class="text-center">
-                                <button onclick="mergeAndDownloadGitHubParts('${baseFileName}', ${JSON.stringify(parts)})" class="bg-blue-500 p-2 rounded">Download</button>
+                                <button onclick="mergeAndDownloadGitHubParts('${escapedFileName}')" class="bg-blue-500 p-2 rounded">Download</button>
+                                <button onclick="downloadChunks('${escapedFileName}')" class="bg-gray-500 p-2 rounded">Download Chunks</button>
                             </td>
                         `;
                         fileList.appendChild(row);
@@ -169,21 +175,92 @@
                 }
             } catch (error) {
                 console.error('Error fetching files:', error);
-                fileList.innerHTML = '<tr><td colspan="3" class="text-center">Failed to load files from GitHub.</td></tr>';
+                fileList.innerHTML = '<tr><td colspan="4" class="text-center">Failed to load files from GitHub.</td></tr>';
             }
         }
 
-        function mergeAndDownloadGitHubParts(fileName, parts) {
-            // Merge the file parts and initiate download
-            const fileChunks = parts.map(part => fetch(part.download_url).then(res => res.blob()));
-            Promise.all(fileChunks).then(blobs => {
-                const combinedBlob = new Blob(blobs, { type: 'application/octet-stream' });
+        async function mergeAndDownloadGitHubParts(fileName) {
+            try {
+                // Fetch all files from the repository
+                const response = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/`);
+                const data = await response.json();
+
+                // Filter parts that belong to the given file
+                let parts = data.filter(file => file.name.startsWith(fileName) && file.name.match(/\.part\d+$/));
+
+                if (parts.length === 0) {
+                    alert(`No parts found for ${fileName}`);
+                    return;
+                }
+
+                // Sort parts in order (e.g., fileName.part1, fileName.part2, ...)
+                parts.sort((a, b) => {
+                    const partA = a.name.match(/\.part(\d+)$/);
+                    const partB = b.name.match(/\.part(\d+)$/);
+                    return (partA && partB) ? parseInt(partA[1]) - parseInt(partB[1]) : 0;
+                });
+
+                // Fetch all file parts as blobs
+                const fileChunks = await Promise.all(parts.map(part => fetch(part.download_url).then(res => res.blob())));
+
+                // Merge blobs into a single file
+                const combinedBlob = new Blob(fileChunks, { type: 'application/octet-stream' });
+
+                // Create a download link and trigger download
                 const downloadLink = document.createElement('a');
                 downloadLink.href = URL.createObjectURL(combinedBlob);
-                downloadLink.download = fileName;
+                downloadLink.download = fileName; // Save as the base file name
                 downloadLink.click();
-            }).catch(err => console.error('Error merging GitHub parts:', err));
+
+            } catch (error) {
+                console.error('Error merging GitHub parts:', error);
+            }
         }
+
+        async function downloadChunks(fileName) {
+            try {
+                const response = await fetch(`https://api.github.com/repos/${username}/${repo}/contents/`);
+                const data = await response.json();
+
+                let parts = data.filter(file =>
+                    file.name.startsWith(fileName) && file.name.match(/\.part\d+$/)
+                );
+
+                if (parts.length === 0) {
+                    alert(`No parts found for ${fileName}`);
+                    return;
+                }
+
+                // Sort parts numerically
+                parts.sort((a, b) => {
+                    const numA = parseInt(a.name.match(/\.part(\d+)$/)[1]);
+                    const numB = parseInt(b.name.match(/\.part(\d+)$/)[1]);
+                    return numA - numB;
+                });
+
+                // Fetch and trigger download for each chunk
+                for (let part of parts) {
+                    fetch(part.download_url)
+                        .then(response => response.blob())
+                        .then(blob => {
+                            const link = document.createElement("a");
+                            link.href = URL.createObjectURL(blob);
+                            link.download = part.name;
+                            document.body.appendChild(link);
+                            link.dispatchEvent(new MouseEvent("click"));
+                            document.body.removeChild(link);
+                            URL.revokeObjectURL(link.href);
+                        })
+                        .catch(error => console.error(`Error downloading ${part.name}:`, error));
+                }
+
+                alert(`Downloading ${parts.length} chunk files.`);
+            } catch (error) {
+                console.error('Error downloading chunks:', error);
+                alert('Failed to download chunks.');
+            }
+        }
+
 
         document.getElementById('localFolderInput').addEventListener('change', function (event) {
             const localFileList = document.getElementById('local-file-list');
