@@ -89,7 +89,11 @@
                     
                     // Include files with valid extensions or part files (e.g., .part1, .part2)
                     if (validFileExtensions.includes(fileExtension) || file.name.match(/\.part\d+$/)) {
-                        filesMap[file.name] = { file, totalSize: file.size };
+                        const baseName = file.name.replace(/\.part\d+$/, '');
+                        if (!filesMap[baseName]) {
+                            filesMap[baseName] = [];
+                        }
+                        filesMap[baseName].push(file);
                     }
                 });
 
@@ -98,13 +102,13 @@
                 if (Object.keys(filesMap).length === 0) {
                     fileList.innerHTML = '<tr><td colspan="3" class="text-center">No valid files available in the repository.</td></tr>';
                 } else {
-                    Object.entries(filesMap).forEach(([fileName, fileData]) => {
+                    Object.entries(filesMap).forEach(([baseFileName, parts]) => {
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td>${fileName}</td>
-                            <td>${(fileData.totalSize / 1024 / 1024).toFixed(3)} MB</td>
+                            <td>${baseFileName}</td>
+                            <td>${(parts.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024).toFixed(3)} MB</td>
                             <td class="text-center">
-                                <a href="${fileData.file.download_url}" class="text-blue-400 hover:underline" download>Download</a>
+                                <button onclick="mergeAndDownloadGitHubParts('${baseFileName}', ${JSON.stringify(parts)})" class="bg-blue-500 p-2 rounded">Download</button>
                             </td>
                         `;
                         fileList.appendChild(row);
@@ -116,64 +120,143 @@
             }
         }
 
-        // Listen for changes to the folder input
+        function mergeAndDownloadGitHubParts(fileName, parts) {
+            // Merge the file parts and initiate download
+            const fileChunks = parts.map(part => fetch(part.download_url).then(res => res.blob()));
+            Promise.all(fileChunks).then(blobs => {
+                const combinedBlob = new Blob(blobs, { type: 'application/octet-stream' });
+                const downloadLink = document.createElement('a');
+                downloadLink.href = URL.createObjectURL(combinedBlob);
+                downloadLink.download = fileName;
+                downloadLink.click();
+            }).catch(err => console.error('Error merging GitHub parts:', err));
+        }
+
+        // Listen for changes to the folder input (for local files)
         document.getElementById('localFolderInput').addEventListener('change', function(event) {
             const localFileList = document.getElementById('local-file-list');
             localFileList.innerHTML = ''; // Clear previous file list
 
             const files = event.target.files;
+            const fileGroups = {}; // Initialize a new object to group files
+
+            // Loop through the selected files and filter out invalid ones
             for (let file of files) {
                 const fileExtension = file.name.split('.').pop().toLowerCase();
-
-                // Only add valid file types
+                
+                // Check if the file extension is valid or if it is a part file (e.g., .part1, .part2)
                 if (validFileExtensions.includes(fileExtension) || file.name.match(/\.part\d+$/)) {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${file.name}</td>
-                        <td>${(file.size / 1024 / 1024).toFixed(3)} MB</td>
-                    `;
-                    localFileList.appendChild(row);
+                    const baseName = file.name.replace(/\.part\d+$/, ''); // Remove the part number to get the base name
+                    
+                    // Group files based on the base name
+                    if (!fileGroups[baseName]) {
+                        fileGroups[baseName] = [];
+                    }
+                    fileGroups[baseName].push(file);
                 }
             }
+
+            // Loop through the grouped files and create rows for the table
+            Object.entries(fileGroups).forEach(([baseName, parts]) => {
+                const row = document.createElement('tr');
+                
+                // Manually escape the single quotes
+                const safeBaseName = baseName.replace(/'/g, "\\'");
+
+                row.innerHTML = `
+                    <td>${baseName}</td>
+                    <td>${(parts.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024).toFixed(3)} MB</td>
+                    <td class="text-center">
+                        <button onclick="mergeLocalPartsAndDownload('${safeBaseName}')" class="bg-blue-500 p-2 rounded">Download</button>
+                    </td>
+                `;
+                localFileList.appendChild(row);
+            });
         });
 
-        function splitFile() {
-            const fileInput = document.getElementById("fileInput");
-            const splitResult = document.getElementById("splitResult");
+
+        function mergeLocalPartsAndDownload(fileName) {
+            const localFolderInput = document.getElementById('localFolderInput');
+            const files = localFolderInput.files;
             
-            if (!fileInput.files.length) {
-                splitResult.innerText = "Please select a file.";
+            // Collect all parts of the file by matching the base name (e.g., fileName.part1, fileName.part2)
+            const parts = [];
+            for (let file of files) {
+                if (file.name.startsWith(fileName)) {
+                    parts.push(file);  // Store matching parts
+                }
+            }
+
+            // If no parts are found, show an alert
+            if (parts.length === 0) {
+                alert(`No parts found for ${fileName}`);
                 return;
             }
 
-            const file = fileInput.files[0];
-            if (file.size < 100 * 1024 * 1024) {
-                splitResult.innerText = "File is under 100MB, no need to split.";
-                return;
-            }
+            // Sort parts in order (e.g., fileName.part1, fileName.part2, ...)
+            parts.sort((a, b) => {
+                const partA = a.name.match(/\.part(\d+)$/);
+                const partB = b.name.match(/\.part(\d+)$/);
+                if (partA && partB) {
+                    return parseInt(partA[1]) - parseInt(partB[1]);  // Sort by the part number
+                }
+                return 0;
+            });
 
-            let start = 0;
-            let index = 1;
-            while (start < file.size) {
-                const chunk = file.slice(start, start + CHUNK_SIZE);
-                const chunkName = `${file.name}.part${index}`;
-                
-                const blob = new Blob([chunk]);
-                const downloadLink = document.createElement("a");
-                downloadLink.href = URL.createObjectURL(blob);
-                downloadLink.download = chunkName;
-                document.body.appendChild(downloadLink);
-                downloadLink.click();
-                document.body.removeChild(downloadLink);
-                
-                start += CHUNK_SIZE;
-                index++;
-            }
-            
-            splitResult.innerText = `File split into ${index - 1} parts. Download each part.`;
+            // Create a Blob to store the merged file
+            const mergedBlob = new Blob(parts, { type: 'application/octet-stream' });
+
+            // Create a download link and trigger it
+            const downloadLink = document.createElement('a');
+            downloadLink.href = URL.createObjectURL(mergedBlob);
+            downloadLink.download = fileName;  // Use the base file name for the merged file
+            downloadLink.click();  // Trigger the download
         }
 
-        // Fetch files from GitHub when the page loads
+        function splitFile() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (file && file.size > CHUNK_SIZE) {
+                const totalParts = Math.ceil(file.size / CHUNK_SIZE);
+                let currentPart = 0;
+
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const chunk = event.target.result;
+                    const chunkBlob = new Blob([chunk], { type: file.type });
+                    const partName = `${file.name}.part${currentPart + 1}`;
+
+                    // Create a download link
+                    const downloadLink = document.createElement('a');
+                    downloadLink.href = URL.createObjectURL(chunkBlob);
+                    downloadLink.download = partName;
+
+                    // Trigger the download automatically
+                    downloadLink.click();
+
+                    console.log(`Part ${currentPart + 1} saved as: ${partName}`);
+
+                    if (++currentPart < totalParts) {
+                        readNextChunk();
+                    } else {
+                        document.getElementById('splitResult').textContent = 'File successfully split into ' + totalParts + ' parts.';
+                    }
+                };
+
+                function readNextChunk() {
+                    const start = currentPart * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, file.size);
+                    reader.readAsArrayBuffer(file.slice(start, end));
+                }
+
+                readNextChunk();
+            } else {
+                alert('File is too small to split.');
+            }
+        }
+
+        // Initial fetch for GitHub files
         fetchFiles();
     </script>
 </body>
